@@ -1,0 +1,105 @@
+name: Web build
+
+# 只在推送分支 web 时构建：网页版前端（VITE_WEB=1）+ web-server（axum）。
+# 与 release.yml 完全解耦，不触发任何 Release / 安装包 / Android 签名流程。
+on:
+  push:
+    branches: ["web"]
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  # ================= Linux：hghub-web + dist =================
+  linux:
+    name: Linux x64 (hghub-web + dist)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: web-server -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 构建前端（网页版）
+        env:
+          VITE_WEB: "1"
+        run: pnpm build
+
+      - name: 编译 web-server
+        run: cargo build --release --manifest-path web-server/Cargo.toml
+
+      - name: 收集产物
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/hghub-web-linux-x64
+          cp web-server/target/release/hghub-web artifacts/hghub-web-linux-x64/
+          cp -r dist artifacts/hghub-web-linux-x64/dist
+          chmod +x artifacts/hghub-web-linux-x64/hghub-web
+          ls -lh artifacts/hghub-web-linux-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-server-linux-x64
+          path: artifacts/hghub-web-linux-x64
+          if-no-files-found: error
+
+  # ================= Windows：hghub-web.exe + dist（本地验证用）=================
+  windows:
+    name: Windows x64 (hghub-web.exe + dist)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: web-server -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 构建前端（网页版）
+        shell: pwsh
+        env:
+          VITE_WEB: "1"
+        run: pnpm build
+
+      - name: 编译 web-server
+        shell: pwsh
+        run: cargo build --release --manifest-path web-server/Cargo.toml
+
+      - name: 收集产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/hghub-web-windows-x64 | Out-Null
+          Copy-Item web-server/target/release/hghub-web.exe artifacts/hghub-web-windows-x64/
+          Copy-Item dist artifacts/hghub-web-windows-x64/dist -Recurse
+          Get-ChildItem artifacts/hghub-web-windows-x64 | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-server-windows-x64
+          path: artifacts/hghub-web-windows-x64
+          if-no-files-found: error
